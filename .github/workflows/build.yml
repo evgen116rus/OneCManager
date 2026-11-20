@@ -1,0 +1,43 @@
+name: Build and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия релиза (например 1.0.0)"
+        required: true
+        default: "1.0.0"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build
+        shell: cmd
+        run: |
+          mkdir out
+          cl /nologo /EHsc /O2 /MT /std:c++17 /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:out\OneCManager.exe /link /SUBSYSTEM:WINDOWS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OneCManager
+          path: out/OneCManager.exe
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+          name: OneCManager ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          files: out/OneCManager.exe
+          generate_release_notes: true
