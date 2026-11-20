@@ -321,23 +321,40 @@ static std::wstring RegStr(HKEY k, const wchar_t* name) {
     return s;
 }
 
+// Служба "Удалённый реестр": тип запуска "Автоматически" + состояние "Запущена".
 static void StartRemoteRegistry(const std::wstring& host) {
     SC_HANDLE m = OpenSCManagerW((L"\\\\" + host).c_str(), nullptr, SC_MANAGER_CONNECT);
-    if (!m) return;
-    SC_HANDLE s = OpenServiceW(m, L"RemoteRegistry", SERVICE_START);
-    if (s) { StartServiceW(s, 0, nullptr); CloseServiceHandle(s); }
+    if (!m) { Log(L"  служба Remote Registry: нет доступа к диспетчеру служб: " + ErrText(GetLastError())); return; }
+    SC_HANDLE s = OpenServiceW(m, L"RemoteRegistry", SERVICE_START | SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS);
+    if (!s) {
+        Log(L"  служба Remote Registry: не удалось открыть: " + ErrText(GetLastError()));
+    } else {
+        if (ChangeServiceConfigW(s, SERVICE_NO_CHANGE, SERVICE_AUTO_START, SERVICE_NO_CHANGE,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr))
+            Log(L"  служба Remote Registry: тип запуска - автоматически");
+        else
+            Log(L"  служба Remote Registry: не удалось задать автозапуск: " + ErrText(GetLastError()));
+        SERVICE_STATUS st{};
+        if (QueryServiceStatus(s, &st) && st.dwCurrentState != SERVICE_RUNNING) {
+            if (!StartServiceW(s, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)
+                Log(L"  служба Remote Registry: не удалось запустить: " + ErrText(GetLastError()));
+            for (int i = 0; i < 20; ++i) {
+                if (QueryServiceStatus(s, &st) && st.dwCurrentState == SERVICE_RUNNING) break;
+                Sleep(500);
+            }
+        }
+        if (QueryServiceStatus(s, &st) && st.dwCurrentState == SERVICE_RUNNING)
+            Log(L"  служба Remote Registry: запущена");
+        CloseServiceHandle(s);
+    }
     CloseServiceHandle(m);
 }
 
 static bool ScanRegistry(const std::wstring& host, std::vector<Product>& out, std::wstring& err) {
     HKEY hr = nullptr;
     std::wstring m = L"\\\\" + host;
+    StartRemoteRegistry(host);   // в начале: автозапуск + запуск службы
     LONG r = RegConnectRegistryW(m.c_str(), HKEY_LOCAL_MACHINE, &hr);
-    if (r != 0) {
-        StartRemoteRegistry(host);
-        Sleep(2000);
-        r = RegConnectRegistryW(m.c_str(), HKEY_LOCAL_MACHINE, &hr);
-    }
     if (r != 0) { err = ErrText(r); return false; }
     for (int v = 0; v < 2; ++v) {
         REGSAM view = v == 0 ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
